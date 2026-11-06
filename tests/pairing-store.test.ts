@@ -30,7 +30,10 @@ describe('PairingTokenStore', () => {
     const store = makeStore()
     store.store('token-a')
     expect(store.current()).toBe('token-a')
-    expect(statSync(store.path).mode & 0o777).toBe(0o600)
+    // Windows 的权限由 ACL 管理, 不支持 POSIX 0600 位语义.
+    if (process.platform !== 'win32') {
+      expect(statSync(store.path).mode & 0o777).toBe(0o600)
+    }
     expect(readFileSync(store.path, 'utf8').trim()).toBe('token-a')
   })
 

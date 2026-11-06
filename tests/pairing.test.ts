@@ -39,10 +39,10 @@ const HANDSHAKE = 'handshake-token'
  * @param pairingToken 初始的配对令牌配置 (空串表示还没配对).
  * @returns 测试装置.
  */
-async function startBridge(pairingToken: string): Promise<Harness> {
+async function startBridge(pairingToken: string, requirePairing: () => boolean = () => true): Promise<Harness> {
   let configured = pairingToken
   const ctx = new Context()
-  const bridge = new BridgeServer(ctx, HANDSHAKE, () => configured)
+  const bridge = new BridgeServer(ctx, HANDSHAKE, () => configured, () => null, requirePairing)
   const server = createServer()
   server.on('upgrade', (req, socket, head) => { bridge.handleUpgrade(req, socket, head) })
   await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
@@ -89,6 +89,21 @@ afterEach(async () => {
 beforeEach(() => { harness = null })
 
 describe('配对令牌校验', () => {
+  it('requirePairing 可动态切换, 关闭时忽略缺失令牌与之前错误', async () => {
+    let required = true
+    harness = await startBridge('', () => required)
+    await harness.greet({ protocolVersion: 1 })
+    expect(harness.bridge.connectionState.pairingError).not.toBeNull()
+    required = false
+    const accepted = await harness.greet({ protocolVersion: 1 })
+    expect(accepted.events.some(event => event.event === 'pairing-rejected')).toBe(false)
+    expect(accepted.closeCode).toBeNull()
+    expect(harness.bridge.connectionState.pairingError).toBeNull()
+    required = true
+    const rejected = await harness.greet({ protocolVersion: 1 })
+    expect(rejected.events.some(event => event.event === 'pairing-rejected')).toBe(true)
+  })
+
   it('dsh 还没配置令牌时拒绝, 并告诉用户去哪里抄', async () => {
     harness = await startBridge('')
     const result = await harness.greet({ protocolVersion: 1, pairingToken: 'whatever' })

@@ -38,6 +38,9 @@ const OK_STATUS: StatusPayload = {
   launchStandaloneChromeProfile: false,
   holderId: null,
   pairingConfigured: true,
+  // 基准取"要求配对"的上游语义, 好让下面的用例继续覆盖配对那一整条判定; 本 fork 的默认值
+  // (不要求配对) 由专门的用例覆盖.
+  requirePairing: true,
   pairingError: null,
   userScriptsAvailable: true,
   launchArgs: null,

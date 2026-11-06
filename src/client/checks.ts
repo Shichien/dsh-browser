@@ -73,13 +73,18 @@ export function checks(status: StatusPayload): CheckRow[] {
     },
     {
       key: 'checkPairing',
-      // 没配对令牌时整条链路都用不了, 所以是 error.
-      state: status.pairingConfigured && status.pairingError === null ? 'done' : 'error',
-      detail: status.pairingError !== null
-        ? status.pairingError
-        : (status.pairingConfigured
-          ? '已配置; 扩展握手时会核对'
-          : '尚未配置: 打开浏览器扩展的弹出面板, 复制其中的配对令牌, 粘贴到配置页的配对令牌输入框并保存'),
+      // requirePairing 关掉时这一项没有对错可言 (令牌不参与判定), 所以报 done 并说明.
+      // 仍然列出来而不是隐藏: 用户需要知道"这里不再要求配对", 否则会以为漏配了什么.
+      state: !status.requirePairing || (status.pairingConfigured && status.pairingError === null)
+        ? 'done'
+        : 'error',
+      detail: !status.requirePairing
+        ? '本 fork 不要求配对: 桥已有握手令牌与回环限制, 扩展连上即可用. 想恢复核对就在 patch 层把 requirePairing 设为 true'
+        : status.pairingError !== null
+          ? status.pairingError
+          : (status.pairingConfigured
+            ? '已配置; 扩展握手时会核对'
+            : '尚未配置: 打开浏览器扩展的弹出面板, 复制其中的配对令牌, 粘贴到配置页的配对令牌输入框并保存'),
     },
     {
       key: 'checkEvaluate',

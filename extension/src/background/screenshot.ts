@@ -65,18 +65,22 @@ export async function captureTab(tabId: number, format: ScreenshotFormat): Promi
   const tab = await getTab(tabId)
   const windowId = tab.windowId
 
-  // 必须先把目标标签页放到前台: captureVisibleTab 截的是窗口里可见的那一帧, 后台标签页
-  // 截出来会是别的页面的内容, 或者直接失败.
+  // Restore minimized windows before focusing: focused:true alone does not restore them.
+  const window = await chrome.windows.get(windowId)
+  await chrome.windows.update(windowId, {
+    ...(window.state === 'minimized' ? { state: 'normal' as const } : {}),
+    focused: true,
+  })
   await chrome.tabs.update(tabId, { active: true })
-  if (typeof windowId === 'number') {
-    // 窗口本身也要提到前台, 被其它窗口盖住时同样拿不到有效画面.
-    await chrome.windows.update(windowId, { focused: true }).catch(() => undefined)
-  }
 
-  // 激活之后等一拍再截, 否则可能截到切换前的旧帧.
+  // Allow Chrome to paint after restoring/activating the window.
   await new Promise<void>((resolve) => { setTimeout(resolve, 150) })
 
   const viewport = await readViewport(tabId)
+  const active = await chrome.tabs.query({ windowId, active: true })
+  if (active[0]?.id !== tabId) {
+    throw new PageError('screenshot-failed', '截图前目标标签页已被切换, 请重新选择目标后截图')
+  }
 
   let dataUrl: string
   try {

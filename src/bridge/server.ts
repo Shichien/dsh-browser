@@ -135,6 +135,12 @@ export class BridgeServer {
     private readonly handshakeToken: string,
     private readonly expectedPairingToken: () => string,
     private readonly expectedUserDataDir: () => string | null = () => null,
+    /**
+     * 是否要求扩展报出配对令牌.
+     *
+     * 缺省 true 保持上游语义, 便于测试与"显式要求配对"的部署; 插件装配处按配置传入.
+     */
+    private readonly requirePairing: () => boolean = () => true,
   ) {
     this.wss.on('connection', socket => { this.attach(socket) })
   }
@@ -148,6 +154,13 @@ export class BridgeServer {
    * @returns 通过时返回 null; 否则返回给用户看的拒绝原因.
    */
   private checkPairing(provided: string | undefined): string | null {
+    // 本 fork: requirePairing 关掉时不做这项核对, 直接通过.
+    //
+    // 这不会把桥变成"谁都能连": 建立连接本身还要先过握手令牌 (`handleUpgrade` 里核对
+    // TOKEN_HEADER), 而那个令牌每次启动重新生成、只写在会合文件里, 扩展必须先让 native
+    // host 读到它才连得上. 配对令牌是在此之上的第二道锁, 用于区分"同一台机器上的哪个
+    // 扩展", 关掉它换来的是零配对步骤.
+    if (!this.requirePairing()) return null
     const expected = this.expectedPairingToken()
     if (expected === '') {
       return 'dsh 还没有配置配对令牌. 请打开浏览器扩展的弹出面板, 复制其中的配对令牌, '

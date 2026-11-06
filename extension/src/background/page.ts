@@ -260,29 +260,48 @@ export async function navigateTab(tabId: number, url: string, timeoutMs: number)
  * @param timeoutMs 等待上限.
  * @returns 是否找到, 以及说明.
  */
+export function normalizeWaitTimeout(value: unknown): number {
+  if (value === undefined) return 10_000
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new PageError('invalid-argument', '参数 timeoutMs 必须是有限整数')
+  }
+  return Math.min(60_000, Math.max(0, value))
+}
+
 export async function waitForText(tabId: number, needle: string, timeoutMs: number): Promise<{ found: boolean, note: string }> {
+  timeoutMs = normalizeWaitTimeout(timeoutMs)
   const deadline = Date.now() + timeoutMs
   let lastUrl = ''
   let lastTitle = ''
-  for (;;) {
+  while (Date.now() < deadline) {
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const current = await readText(tabId)
+      const current = await Promise.race([
+        readText(tabId),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()))
+        }),
+      ])
+      if (current === null) break
       lastUrl = current.url
       lastTitle = current.title
+      if (Date.now() >= deadline) break
       if (current.text.includes(needle)) {
         return { found: true, note: `在 ${lastUrl} 找到了 "${needle}"` }
       }
     } catch (error) {
       if (error instanceof PageError && error.code === 'stale-target') throw error
-      // 导航过程中注入会短暂失败, 属于预期情况, 继续轮询.
+      // Navigation may transiently reject injection; retry only within the deadline.
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
     }
-    if (Date.now() >= deadline) {
-      return {
-        found: false,
-        note: `等待 ${timeoutMs}ms 后仍未在 ${lastUrl} (${lastTitle}) 找到 "${needle}"; 可能是加载未完成或文本在 iframe 内`,
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 400))
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    await new Promise(resolve => setTimeout(resolve, Math.min(400, remaining)))
+  }
+  return {
+    found: false,
+    note: `等待 ${timeoutMs}ms 后仍未在 ${lastUrl || '尚未读取到页面地址'} (${lastTitle}) 找到 "${needle}"; 可能是加载未完成或文本在 iframe 内`,
   }
 }
 

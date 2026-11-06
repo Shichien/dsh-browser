@@ -112,10 +112,13 @@ describe('native messaging 组件安装', () => {
     }
     // 必须把会合文件路径传进去, host 靠它找到回连地址.
     expect(wrapper).toContain('bridge.json')
-    // exec 让 node 顶替 shell, Chrome 的管道直接连到 node.
-    expect(wrapper).toContain('exec ')
-
-    if (process.platform !== 'win32') {
+    if (process.platform === 'win32') {
+      expect(status.wrapperPath).toMatch(/\.cmd$/u)
+      expect(wrapper).toContain('@echo off')
+      expect(wrapper).toContain(`"${process.execPath}"`)
+    } else {
+      // POSIX 下 exec 让 node 顶替 shell; Windows 使用 cmd 包装脚本.
+      expect(wrapper).toContain('exec ')
       const mode = (await stat(status.wrapperPath)).mode & 0o777
       expect(mode & 0o111, '包装脚本必须可执行').not.toBe(0)
     }

@@ -13,6 +13,8 @@
 import { describe, expect, it } from 'vitest'
 import { evaluateSetup, setupGaps } from '../src/setup.ts'
 import type { SetupInput } from '../src/setup.ts'
+import { checks } from '../src/client/checks.ts'
+import type { StatusPayload } from '../shared/status.ts'
 
 /** 一份"完全配好且扩展已连上"的输入; 各用例只改自己关心的字段. */
 const READY: SetupInput = {
@@ -20,6 +22,9 @@ const READY: SetupInput = {
   extensionReady: true,
   extensionDir: '/data/dsh-browser/extension',
   pairingConfigured: true,
+  // 基准保持"要求配对"的上游语义, 于是下面几条继续钉住配对那条路; 本 fork 的默认值
+  // (不要求配对) 由紧跟其后的专门用例覆盖.
+  requirePairing: true,
   pairingError: null,
   bridgeConnected: true,
   launchStandaloneChromeProfile: false,
@@ -33,6 +38,59 @@ const READY: SetupInput = {
  */
 function withPatch(patch: Partial<SetupInput>): SetupInput {
   return { ...READY, ...patch }
+}
+
+/**
+ * 造一份配置页要读的完整状态, 只覆盖关心的字段.
+ *
+ * 配置页那一行 (checkPairing) 读的是 StatusPayload 而不是 SetupInput, 所以这里单独造一份;
+ * 字段值与 READY 对齐, 免得两处基准漂移.
+ *
+ * @param patch 要覆盖的字段.
+ * @returns 完整状态.
+ */
+function statusWith(patch: Partial<StatusPayload>): StatusPayload {
+  return {
+    chromePath: '/usr/bin/google-chrome',
+    chromeSource: 'standard-path',
+    chromeError: null,
+    profileDir: '/data/dsh-browser/profile',
+    dataDir: '/data/dsh-browser',
+    extensionId: 'hfbmjjcgbobkpmmkhfjgebcojhjpdokd',
+    extensionDir: '/data/dsh-browser/extension',
+    manifestPath: '/data/dsh-browser/native-host/com.azazo1.dsh_browser.json',
+    manifestReady: true,
+    manifestStale: false,
+    interpreter: '/usr/local/bin/node',
+    bridgeConnected: true,
+    peerUserDataDir: null,
+    extensionVersion: '0.1.0',
+    boundTabId: null,
+    userScriptsAvailable: null,
+    bridgeError: null,
+    launchStandaloneChromeProfile: false,
+    holderId: null,
+    pairingConfigured: true,
+    requirePairing: true,
+    pairingError: null,
+    launchArgs: null,
+    manualSteps: [],
+    ready: true,
+    ...patch,
+  }
+}
+
+/**
+ * 取配置页某一行的状态.
+ *
+ * @param status 状态.
+ * @param key 行的键.
+ * @returns 该行状态.
+ */
+function stateOf(status: StatusPayload, key: string): string {
+  const row = checks(status).find(candidate => candidate.key === key)
+  expect(row, `找不到 ${key} 这一行`).toBeDefined()
+  return row!.state
 }
 
 describe('就绪判定', () => {
@@ -108,5 +166,18 @@ describe('就绪判定', () => {
   it('只缺可选能力时仍然就绪 (求值开关不影响整体可用)', () => {
     // browser_evaluate 需要额外的手动开关, 但不开也能用其余工具, 所以它不该进 gaps.
     expect(setupGaps(READY)).toEqual([])
+  })
+
+  it('本 fork 默认不要求配对: 没填令牌也算就绪', () => {
+    // 这是本 fork 与上游的第一处语义差异. 关掉配对时"没填令牌"不该再挡路, 否则装好扩展的
+    // 用户会永远停在一句"dsh 侧还没填配对令牌"上, 而那条路其实已经通了.
+    const status = evaluateSetup(withPatch({ requirePairing: false, pairingConfigured: false }))
+    expect(status.ready).toBe(true)
+    expect(status.gaps).toEqual([])
+  })
+
+  it('不要求配对时, 配置页那行不再是 error', () => {
+    const status = statusWith({ requirePairing: false, pairingConfigured: false })
+    expect(stateOf(status, 'checkPairing')).toBe('done')
   })
 })

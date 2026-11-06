@@ -129,11 +129,16 @@ export function formatStatus(
     ? '启动独立 profile, 不复用日常 Chrome'
     : '不自行启动 Chrome, 只用你现有的浏览器 (launchStandaloneChromeProfile 未打开)'}`)
   // 配对状态放在扩展连接之前: 没配对时后面所有浏览器操作都会失败, 而原因就是这个, 所以
-  // 用户应当先看到它.
-  lines.push(status.pairingConfigured
-    ? `配对令牌: 已配置${status.pairingError === null ? '' : ' (但最近一次握手被拒)'}`
-    : '配对令牌: 尚未配置 —— 请打开浏览器扩展的弹出面板复制配对令牌, 粘贴到 dsh 配置页的配对令牌输入框并保存')
-  if (status.pairingError !== null) lines.push(`配对失败原因: ${status.pairingError}`)
+  // 用户应当先看到它. requirePairing 关掉时这两行合并成一句说明, 免得显示一个不参与判定的
+  // "尚未配置" 让用户以为还缺东西.
+  if (!status.requirePairing) {
+    lines.push('配对令牌: 不要求 (requirePairing 已关闭, 扩展无需配对即可连接)')
+  } else {
+    lines.push(status.pairingConfigured
+      ? `配对令牌: 已配置${status.pairingError === null ? '' : ' (但最近一次握手被拒)'}`
+      : '配对令牌: 尚未配置 —— 请打开浏览器扩展的弹出面板复制配对令牌, 粘贴到 dsh 配置页的配对令牌输入框并保存')
+    if (status.pairingError !== null) lines.push(`配对失败原因: ${status.pairingError}`)
+  }
   lines.push(`扩展连接: ${extensionLinkCounts(status)
     ? `已连接${status.extensionVersion === null ? '' : ` (扩展版本 ${status.extensionVersion})`}`
     : (status.launchStandaloneChromeProfile && status.launchArgs === null
@@ -155,7 +160,9 @@ export function formatStatus(
     ? ''
     : (status.holderId === selfId
         ? ' (本会话持有: 可以直接操作)'
-        : ' (本会话未持有: 下一次浏览器调用会先弹审批申请)')
+        : status.askOnAcquire
+          ? ' (本会话未持有: 下一次浏览器调用会先弹审批申请)'
+          : ' (本会话未持有: 下一次浏览器调用在就绪后会静默取得驱动权, 无需审批)')
   lines.push(`驱动权: ${holder}${mine}`)
   // 求值能力取决于一个只能由用户手动打开的开关, 所以这里直接说清楚, 免得模型反复试
   // browser_evaluate 才发现不能用.

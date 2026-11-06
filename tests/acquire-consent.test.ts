@@ -109,7 +109,7 @@ function makeApproval(initial: Outcome): {
  */
 function makeHarness(approval: unknown, askOnAcquire = true): {
   runtime: BrowserRuntime
-  request: (agent: Agent, toolName: string, args?: unknown) => Promise<{ kind: string, reason?: string }>
+  request: (agent: Agent, toolName: string, args?: unknown, setup?: { ready: boolean, gaps: string[], guide: string }) => Promise<{ kind: string, reason?: string }>
 } {
   const ctx = new Context() as Context & Record<string, unknown>
   ;(ctx as unknown as { provide: (name: string, value: unknown) => void }).provide('webServer', { port: 54_213 })
@@ -137,6 +137,22 @@ function makeHarness(approval: unknown, askOnAcquire = true): {
 }
 
 describe('浏览器驱动权的申请与让出', () => {
+  it.each([true, false])('browser_console 也遵循 askOnAcquire=%s', async (enabled) => {
+    const approval = makeApproval('allowed-once')
+    const { request, runtime } = makeHarness(approval.service, enabled)
+    const { agent } = makeAgent('console-session')
+    expect((await request(agent, 'browser_console')).kind).toBe('allow')
+    expect(runtime.holdsBrowser(agent)).toBe(true)
+    expect(approval.asks).toHaveLength(enabled ? 1 : 0)
+  })
+
+  it.each(['browser_status', 'browser_release', 'unrelated_tool'])('静默模式不会因为 %s 取得驱动权', async (tool) => {
+    const { request, runtime } = makeHarness(undefined, false)
+    const { agent } = makeAgent('observer')
+    expect((await request(agent, tool)).kind).toBe('allow')
+    expect(runtime.holdsBrowser(agent)).toBe(false)
+  })
+
   it('会话第一次要占用浏览器时, 会走一次审批', async () => {
     const approval = makeApproval('allowed-once')
     const { request } = makeHarness(approval.service)
@@ -249,6 +265,53 @@ describe('浏览器驱动权的申请与让出', () => {
     expect(result.kind).toBe('allow')
     // 这是显式选择的行为, 前提是用户自己关掉了那个开关.
     expect(approval.asks).toHaveLength(0)
+  })
+
+  it('关掉 askOnAcquire 时会真的把驱动权交过来 (上游在这里漏了授予)', async () => {
+    const approval = makeApproval('rejected')
+    const { request, runtime } = makeHarness(approval.service, false)
+    const { agent } = makeAgent('session-a')
+
+    // 上游在这一分支直接返回 allow, 但没有 grant; 而 BrowserRuntime.run 要求本会话**持有**
+    // 驱动权, 于是关掉开关的会话每次调用都会拿到"本会话还没有取得浏览器" —— 文档承诺的静默
+    // 自动取得从未真正发生. 本 fork 补齐授予, 所以这里必须为 true.
+    expect(runtime.holdsBrowser(agent)).toBe(false)
+    const result = await request(agent, 'browser_snapshot')
+    expect(result.kind).toBe('allow')
+    expect(runtime.holdsBrowser(agent)).toBe(true)
+    expect(runtime.grantedId).toBe('session-a')
+    // 而且这一步不能顺手去问用户: 关掉开关的意思就是"别问".
+    expect(approval.asks).toHaveLength(0)
+  })
+
+  it('关掉 askOnAcquire 但没配好时, 给的是配置说明而不是"没有取得浏览器"', async () => {
+    const { request, runtime } = makeHarness(undefined, false)
+    const { agent } = makeAgent('session-a')
+
+    const result = await request(agent, 'browser_open', {}, {
+      ready: false,
+      gaps: ['扩展还没连上来'],
+      guide: '浏览器还没配置好, 请把步骤讲给用户.',
+    })
+    expect(result.kind).toBe('deny')
+    // 关键: 原因是"没配好", 而不是一句与真实原因无关的权限报错.
+    expect(result.reason).toContain('讲给用户')
+    // 没配好时不能先把驱动权授出去: 那会让状态显示"已拿到"而工具全失败.
+    expect(runtime.holdsBrowser(agent)).toBe(false)
+  })
+
+  it('askOnAcquire 关闭时, 第二个会话也能直接接手', async () => {
+    const { request, runtime } = makeHarness(undefined, false)
+    const a = makeAgent('session-a')
+    const b = makeAgent('session-b')
+
+    await request(a.agent, 'browser_snapshot')
+    expect(runtime.grantedId).toBe('session-a')
+
+    // 无人值守场景的关键: 另一个会话要用就直接拿过来, 不需要谁来点同意.
+    await request(b.agent, 'browser_snapshot')
+    expect(runtime.grantedId).toBe('session-b')
+    expect(runtime.holdsBrowser(a.agent)).toBe(false)
   })
 
   it('browser_status 不申请: 它不碰浏览器', async () => {

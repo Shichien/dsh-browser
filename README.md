@@ -1,4 +1,14 @@
-# dsh-browser
+# dsh-browser（Shichien 维护版）
+
+本仓库是 [azazo1/dsh-browser](https://github.com/azazo1/dsh-browser) 的独立维护 fork，保留上游出处和 MIT 许可证。当前版本为 `0.1.1-local.1`。
+
+本版默认 `askOnAcquire: false`，首次调用自动取得驱动权；`requirePairing: false`，无需手动抄配对令牌，native messaging 桥连接认证仍保留。两项均可重新开启。浏览器仍只允许一个会话操作，切换会话后应重新选择目标标签页。
+
+主要修复：控制台工具自动取得驱动权、跨会话标签绑定隔离、页面等待截止时间、最小化窗口截图、权限状态提示、插件重载时接口路由释放，以及 Windows 测试兼容性。回归验证：241 项通过，2 项 POSIX 专用测试在 Windows 跳过；host/client/extension 类型检查与构建通过。
+
+安装此 fork：`dsh plugin --profile desktop add Shichien/dsh-browser`。升级已有安装后，重启 DSH，并在 Chrome/Edge 扩展页重新加载扩展。任意 JavaScript 求值需要在扩展详情页开启 Allow User Scripts；普通读取、查询、点击、填入和截图不依赖该开关。
+
+维护命令：`pnpm typecheck`、`pnpm test`、`pnpm build`。以下保留上游架构文档；配对和审批默认值以上述说明及实际配置为准。
 
 把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 接到本机真实的 Google Chrome 上, **不使用 Chrome 调试协议**.
 

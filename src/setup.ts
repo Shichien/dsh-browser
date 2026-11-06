@@ -27,6 +27,13 @@ export interface SetupInput {
   extensionDir: string
   /** dsh 侧是否已经填了配对令牌. */
   pairingConfigured: boolean
+  /**
+   * 握手是否要求配对令牌.
+   *
+   * 本 fork 默认 false: 这时"没填令牌"不再算缺陷, 因为它压根不参与判定. 不区分这一点的话,
+   * 关掉配对的部署会永远停在"dsh 侧还没填配对令牌"上, 而那条路其实已经通了.
+   */
+  requirePairing: boolean
   /** 握手因配对失败被拒的原因; null 表示没有发生过. */
   pairingError: string | null
   /** 扩展当前是否连着桥 (也就是"现在能不能立刻用上"). */
@@ -61,11 +68,13 @@ export function setupGaps(input: SetupInput): string[] {
   if (!input.extensionReady) {
     gaps.push(`扩展产物不在 ${input.extensionDir}, 需要重新安装一次连接组件`)
   }
-  if (!input.pairingConfigured) {
-    gaps.push('dsh 侧还没填配对令牌')
-  } else if (input.pairingError !== null) {
-    // 配对失败时原因本身就要讲出来, 否则用户只知道"没配好"却不知道错在哪.
-    gaps.push(`配对没通过: ${input.pairingError}`)
+  if (input.requirePairing) {
+    if (!input.pairingConfigured) {
+      gaps.push('dsh 侧还没填配对令牌')
+    } else if (input.pairingError !== null) {
+      // 配对失败时原因本身就要讲出来, 否则用户只知道"没配好"却不知道错在哪.
+      gaps.push(`配对没通过: ${input.pairingError}`)
+    }
   }
   // "还没连上"只有在**没有别的路可走**时才算缺陷: 允许启动自带 Chrome 的情况下, 先启动再连接
   // 就是正常的流程, 若也算缺陷, 那条路会被自己的就绪检查挡住而永远走不通.
@@ -102,7 +111,7 @@ export function setupGuide(gaps: readonly string[], input: SetupInput): string {
     `   ${input.extensionDir}`,
     '   (若这个扩展已经加载过, 只要点一下它的刷新按钮即可.)',
   )
-  if (!input.pairingConfigured || input.pairingError !== null) {
+  if (input.requirePairing && (!input.pairingConfigured || input.pairingError !== null)) {
     lines.push(
       '3. 点浏览器工具栏上的 dsh Browser 图标打开弹出面板, 复制里面的「配对令牌」.',
       '   把令牌粘贴回 dsh 的 dsh-browser 配置页的配对令牌输入框并点「保存令牌」; ',

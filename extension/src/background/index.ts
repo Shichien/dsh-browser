@@ -29,6 +29,7 @@ import {
   uploadBeginInTab,
   uploadChunkInTab,
   uploadCommitInTab,
+  normalizeWaitTimeout,
   waitForText,
 } from './page.js'
 import { captureTab } from './screenshot.js'
@@ -147,7 +148,7 @@ async function dispatch(method: string, args: Record<string, unknown>): Promise<
     case 'page.text':
       return readText(await ensureBoundTabAlive())
     case 'page.waitFor':
-      return waitForText(await ensureBoundTabAlive(), String(args.text), Number(args.timeoutMs ?? 10_000))
+      return waitForText(await ensureBoundTabAlive(), String(args.text), normalizeWaitTimeout(args.timeoutMs))
     case 'page.query':
       return queryInTab(
         await ensureBoundTabAlive(),
@@ -196,13 +197,21 @@ async function dispatch(method: string, args: Record<string, unknown>): Promise<
 
 /** 把一次调用包成截止时间, 超时就回 timeout 而不是一直挂着. */
 async function dispatchWithTimeout(frame: CallFrame): Promise<unknown> {
-  const work = dispatch(frame.method, (frame.args ?? {}) as Record<string, unknown>)
-  const timeout = new Promise<never>((_, reject) => {
-    setTimeout(() => {
-      reject(new PageError('timeout', `操作 ${frame.method} 超过 ${frame.timeoutMs}ms 仍未返回`))
-    }, frame.timeoutMs)
-  })
-  return Promise.race([work, timeout])
+  const args = (frame.args ?? {}) as Record<string, unknown>
+  const timeoutMs = frame.method === 'page.waitFor'
+    ? normalizeWaitTimeout(args.timeoutMs) + 1_000
+    : frame.timeoutMs
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new PageError('timeout', `操作 ${frame.method} 超过 ${timeoutMs}ms 仍未返回`))
+      }, timeoutMs)
+    })
+    return await Promise.race([dispatch(frame.method, args), timeout])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 /** 处理宿主帧. */
@@ -294,7 +303,7 @@ const bridge = new NativeBridge(handleFrame, greet, log)
  */
 function userScriptsAvailable(): boolean {
   try {
-    return (chrome as unknown as { userScripts?: unknown }).userScripts !== undefined
+    return typeof (chrome as unknown as { userScripts?: { execute?: unknown } }).userScripts?.execute === 'function'
   } catch {
     return false
   }

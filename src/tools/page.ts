@@ -234,8 +234,8 @@ export function pageTools(deps: ToolDeps): ToolDefinition[] {
       render: (_args, value) => [{ type: 'text', text: value.text }],
     },
     execute: async (args, exec) => runBrowser(deps, exec, async (resource) => {
-      const timeoutMs = toIntegerArg(args.timeoutMs, 'timeoutMs', 10_000)
-      const result = await resource.call('page.waitFor', { text: args.text, timeoutMs }, exec.signal)
+      const timeoutMs = Math.min(60_000, Math.max(0, toIntegerArg(args.timeoutMs, 'timeoutMs', 10_000)))
+      const result = await resource.call('page.waitFor', { text: args.text, timeoutMs }, exec.signal, { timeoutMs: timeoutMs + 2_000 })
       return {
         found: result.found,
         text: result.found

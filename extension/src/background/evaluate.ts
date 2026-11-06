@@ -57,7 +57,8 @@ interface UserScriptsInjectionResult {
 function userScriptsApi(): UserScriptsApi | null {
   try {
     const chromeLike = chrome as unknown as { userScripts?: UserScriptsApi }
-    return chromeLike.userScripts ?? null
+    const api = chromeLike.userScripts
+    return typeof api?.execute === 'function' ? api : null
   } catch {
     return null
   }
@@ -200,8 +201,8 @@ export async function evaluateInTab(tabId: number, expression: string, world: Ev
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    // 开关被中途收回时接口还在, 但调用会失败, 所以这条也要给出同样的指引.
-    throw new PageError('evaluate-failed', `求值调用失败: ${message}. ${TOGGLE_HINT}`)
+    const hint = userScriptsApi() === null ? `. ${TOGGLE_HINT}` : ''
+    throw new PageError('evaluate-failed', `求值调用失败: ${message}${hint}`)
   }
 
   const first = results[0]

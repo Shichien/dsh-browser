@@ -914,29 +914,47 @@ async function navigateTab(tabId, url, timeoutMs) {
   const after = await getTab(tabId);
   return { url: after.url, title: after.title, completed };
 }
+function normalizeWaitTimeout(value) {
+  if (value === void 0) return 1e4;
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new PageError("invalid-argument", "\u53C2\u6570 timeoutMs \u5FC5\u987B\u662F\u6709\u9650\u6574\u6570");
+  }
+  return Math.min(6e4, Math.max(0, value));
+}
 async function waitForText(tabId, needle, timeoutMs) {
+  timeoutMs = normalizeWaitTimeout(timeoutMs);
   const deadline = Date.now() + timeoutMs;
   let lastUrl = "";
   let lastTitle = "";
-  for (; ; ) {
+  while (Date.now() < deadline) {
+    let timer;
     try {
-      const current = await readText(tabId);
+      const current = await Promise.race([
+        readText(tabId),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()));
+        })
+      ]);
+      if (current === null) break;
       lastUrl = current.url;
       lastTitle = current.title;
+      if (Date.now() >= deadline) break;
       if (current.text.includes(needle)) {
         return { found: true, note: `\u5728 ${lastUrl} \u627E\u5230\u4E86 "${needle}"` };
       }
     } catch (error) {
       if (error instanceof PageError && error.code === "stale-target") throw error;
+    } finally {
+      if (timer !== void 0) clearTimeout(timer);
     }
-    if (Date.now() >= deadline) {
-      return {
-        found: false,
-        note: `\u7B49\u5F85 ${timeoutMs}ms \u540E\u4ECD\u672A\u5728 ${lastUrl} (${lastTitle}) \u627E\u5230 "${needle}"; \u53EF\u80FD\u662F\u52A0\u8F7D\u672A\u5B8C\u6210\u6216\u6587\u672C\u5728 iframe \u5185`
-      };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(400, remaining)));
   }
+  return {
+    found: false,
+    note: `\u7B49\u5F85 ${timeoutMs}ms \u540E\u4ECD\u672A\u5728 ${lastUrl || "\u5C1A\u672A\u8BFB\u53D6\u5230\u9875\u9762\u5730\u5740"} (${lastTitle}) \u627E\u5230 "${needle}"; \u53EF\u80FD\u662F\u52A0\u8F7D\u672A\u5B8C\u6210\u6216\u6587\u672C\u5728 iframe \u5185`
+  };
 }
 async function queryInTab(tabId, selector, limit, maxChars) {
   const value = await runInTab(tabId, queryElements, [selector, limit, maxChars]);
@@ -995,14 +1013,20 @@ async function readViewport(tabId) {
 async function captureTab(tabId, format) {
   const tab = await getTab(tabId);
   const windowId = tab.windowId;
+  const window = await chrome.windows.get(windowId);
+  await chrome.windows.update(windowId, {
+    ...window.state === "minimized" ? { state: "normal" } : {},
+    focused: true
+  });
   await chrome.tabs.update(tabId, { active: true });
-  if (typeof windowId === "number") {
-    await chrome.windows.update(windowId, { focused: true }).catch(() => void 0);
-  }
   await new Promise((resolve) => {
     setTimeout(resolve, 150);
   });
   const viewport = await readViewport(tabId);
+  const active = await chrome.tabs.query({ windowId, active: true });
+  if (active[0]?.id !== tabId) {
+    throw new PageError("screenshot-failed", "\u622A\u56FE\u524D\u76EE\u6807\u6807\u7B7E\u9875\u5DF2\u88AB\u5207\u6362, \u8BF7\u91CD\u65B0\u9009\u62E9\u76EE\u6807\u540E\u622A\u56FE");
+  }
   let dataUrl;
   try {
     dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format });
@@ -1030,7 +1054,8 @@ async function captureTab(tabId, format) {
 function userScriptsApi() {
   try {
     const chromeLike = chrome;
-    return chromeLike.userScripts ?? null;
+    const api = chromeLike.userScripts;
+    return typeof api?.execute === "function" ? api : null;
   } catch {
     return null;
   }
@@ -1137,7 +1162,8 @@ async function evaluateInTab(tabId, expression, world) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new PageError("evaluate-failed", `\u6C42\u503C\u8C03\u7528\u5931\u8D25: ${message}. ${TOGGLE_HINT}`);
+    const hint = userScriptsApi() === null ? `. ${TOGGLE_HINT}` : "";
+    throw new PageError("evaluate-failed", `\u6C42\u503C\u8C03\u7528\u5931\u8D25: ${message}${hint}`);
   }
   const first = results[0];
   if (first === void 0) {
@@ -1480,7 +1506,7 @@ async function dispatch(method, args) {
     case "page.text":
       return readText(await ensureBoundTabAlive());
     case "page.waitFor":
-      return waitForText(await ensureBoundTabAlive(), String(args.text), Number(args.timeoutMs ?? 1e4));
+      return waitForText(await ensureBoundTabAlive(), String(args.text), normalizeWaitTimeout(args.timeoutMs));
     case "page.query":
       return queryInTab(
         await ensureBoundTabAlive(),
@@ -1527,13 +1553,19 @@ async function dispatch(method, args) {
   }
 }
 async function dispatchWithTimeout(frame) {
-  const work = dispatch(frame.method, frame.args ?? {});
-  const timeout = new Promise((_, reject) => {
-    setTimeout(() => {
-      reject(new PageError("timeout", `\u64CD\u4F5C ${frame.method} \u8D85\u8FC7 ${frame.timeoutMs}ms \u4ECD\u672A\u8FD4\u56DE`));
-    }, frame.timeoutMs);
-  });
-  return Promise.race([work, timeout]);
+  const args = frame.args ?? {};
+  const timeoutMs = frame.method === "page.waitFor" ? normalizeWaitTimeout(args.timeoutMs) + 1e3 : frame.timeoutMs;
+  let timer;
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new PageError("timeout", `\u64CD\u4F5C ${frame.method} \u8D85\u8FC7 ${timeoutMs}ms \u4ECD\u672A\u8FD4\u56DE`));
+      }, timeoutMs);
+    });
+    return await Promise.race([dispatch(frame.method, args), timeout]);
+  } finally {
+    if (timer !== void 0) clearTimeout(timer);
+  }
 }
 async function handleFrame(raw) {
   const frame = raw;
@@ -1597,7 +1629,7 @@ function greet() {
 var bridge = new NativeBridge(handleFrame, greet, log);
 function userScriptsAvailable() {
   try {
-    return chrome.userScripts !== void 0;
+    return typeof chrome.userScripts?.execute === "function";
   } catch {
     return false;
   }

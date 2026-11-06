@@ -32,8 +32,25 @@ export interface Config {
    *
    * 语义是"申请": 浏览器平面同一时刻只服务一个会话, 所以每个会话第一次要用它时都走一次
    * 审批, 由用户决定现在归谁. 关掉它才会退回"静默自动取得".
+   *
+   * 本 fork 默认**关闭**: "装好就能用, 不必每开一个会话点一次同意"正是这份 fork 的目的.
+   * 打开它则退回上游语义, 每次换手都要用户点头.
    */
   askOnAcquire: Volatile<boolean>
+  /**
+   * 握手时是否要求扩展报出配对令牌.
+   *
+   * 本 fork 默认**关闭**. 理由: 桥只监听回环地址, 而且扩展还得先拿出会合文件里的握手
+   * 令牌才能建立连接 —— 配对令牌在这里是第二道锁, 不是唯一一道. 关掉它换来的是"零配对
+   * 步骤": 装好扩展直接可用, 不必把令牌从扩展面板抄到配置页.
+   *
+   * 打开它的场景: 这台机器上还有别的扩展或本地进程可能去连回环桥, 而你希望只有被明确
+   * 认可的那一个扩展能连上. 打开后必须走完配对流程 (扩展面板复制令牌 -> 配置页保存),
+   * 否则连接会被拒.
+   *
+   * 注意这与"能不能操作浏览器"无关: 关掉它不会让工具少任何能力, 只是不再核对令牌.
+   */
+  requirePairing: Volatile<boolean>
   /**
    * 是否允许 dsh 启动它自己那份独立 profile 的 Chrome.
    *
@@ -48,6 +65,8 @@ export interface Config {
   launchStandaloneChromeProfile: Volatile<boolean>
   /**
    * 与浏览器扩展配对的令牌的**入口**.
+   *
+   * 注意: `requirePairing` 默认关闭时本字段完全不参与判定, 留空即可.
    *
    * 由扩展生成并在它的弹出面板里展示, 用户抄到这里. 插件读到非空值就立刻把它转移到
    * 数据目录下的令牌文件 (见 pairing-store.ts) 并把本字段清空: 令牌是每台设备各一份的
@@ -97,7 +116,13 @@ export const Config = Schema.object({
   profileDir: Schema.string().volatile(),
   dataDir: Schema.string().volatile(),
   extraArgs: Schema.array(Schema.string()).default([]).volatile(),
-  askOnAcquire: Schema.boolean().default(true).volatile(),
+  // 本 fork 的两个默认值都被翻过来了, 它们合起来才是"装好就能用"的体验:
+  //   askOnAcquire=false       每个会话第一次用浏览器时不再弹审批, 直接静默取得;
+  //   requirePairing=false     握手不再要求扩展报出配对令牌, 于是没有抄令牌这一步.
+  // 两者都还是可配置的: 想退回上游那种"每次换手都要用户点头 + 必须配对"的行为,
+  // 在 profile 的 patch 层把对应项设成 true 即可.
+  askOnAcquire: Schema.boolean().default(false).volatile(),
+  requirePairing: Schema.boolean().default(false).volatile(),
   launchStandaloneChromeProfile: Schema.boolean().default(false).volatile(),
   pairingToken: Schema.string().default('').volatile(),
   installHostAutomatically: Schema.boolean().default(false).volatile(),

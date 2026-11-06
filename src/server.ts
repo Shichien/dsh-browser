@@ -118,6 +118,7 @@ async function collect(runtime: BrowserRuntime): Promise<StatusPayload> {
     launchStandaloneChromeProfile: status.launchStandaloneChromeProfile,
     holderId: status.holderId,
     pairingConfigured: status.pairingConfigured,
+    requirePairing: status.requirePairing,
     pairingError: status.pairingError,
     launchArgs: status.launchArgs,
     peerUserDataDir: status.peerUserDataDir,
@@ -127,6 +128,7 @@ async function collect(runtime: BrowserRuntime): Promise<StatusPayload> {
       ...hostParts(status.host, runtime.paths),
       pairingConfigured: status.pairingConfigured,
       pairingError: status.pairingError,
+      requirePairing: status.requirePairing,
       bridgeConnected: status.bridgeConnected,
       launchStandaloneChromeProfile: status.launchStandaloneChromeProfile,
     }).ready,
@@ -150,7 +152,7 @@ async function collect(runtime: BrowserRuntime): Promise<StatusPayload> {
  */
 export function registerApi(ctx: Context, runtime: BrowserRuntime, pairing: PairingTokenStore, pairingDrain: PairingDrain): void {
   const webServer = ctx.webServer
-  webServer.register({
+  ctx.effect(() => webServer.register({
     kind: 'prefix',
     path: API_PREFIX,
     handler: async (req: IncomingMessage, res: ServerResponse) => {
@@ -241,5 +243,5 @@ export function registerApi(ctx: Context, runtime: BrowserRuntime, pairing: Pair
         sendJson(res, 500, { error: message })
       }
     },
-  })
+  }), 'dsh-browser: api route')
 }

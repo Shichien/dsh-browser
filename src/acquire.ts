@@ -42,6 +42,7 @@ export const BROWSER_TOOLS: ReadonlySet<string> = new Set([
   'browser_upload',
   'browser_screenshot',
   'browser_evaluate',
+  'browser_console',
 ])
 
 /**
@@ -151,6 +152,25 @@ export async function requestBrowserAccess(input: AcquireInput): Promise<Acquire
     holdsBrowser: input.runtime.holdsBrowser(input.agent),
     enabled: input.config.askOnAcquire.get(),
   })) {
+    // 走到这里有两种来路, 必须分开收尾:
+    //
+    //   1. 本会话已经持有驱动权, 或这个工具根本不碰浏览器 (browser_status /
+    //      browser_release) —— 无事可做, 直接放行;
+    //   2. `askOnAcquire` 被关掉, 而这是一个要用浏览器的工具 —— 这时要**真的把驱动权
+    //      交过来**.
+    //
+    // 第 2 点是上游的一个缺口: 它在这个分支直接返回 allow, 但执行层
+    // (`BrowserRuntime.run`) 还要求本会话**持有**驱动权, 而授予只发生在审批通过之后.
+    // 于是关掉开关的会话每次调用都在取资源那一步拿到"本会话还没有取得浏览器", 文档承诺
+    // 的"静默自动取得"其实从未取得过. 本 fork 在此补齐授予.
+    if (input.runtime.holdsBrowser(input.agent)) return { kind: 'allow' }
+    if (!BROWSER_TOOLS.has(input.toolName)) return { kind: 'allow' }
+
+    // 静默取得之前仍要确认有一条能真正用上的路: 否则调用会在更后面失败成一句与真实原因
+    // (缺组件 / 扩展没连上) 无关的报错, 用户没有可照做的下一步.
+    if (!input.setup.ready) return { kind: 'deny', reason: input.setup.guide }
+
+    input.runtime.grant(input.agent)
     return { kind: 'allow' }
   }
 

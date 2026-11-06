@@ -23,6 +23,7 @@ import { Config } from '../src/config.ts'
 import { BrowserRuntime, makeResource } from '../src/runtime.ts'
 import { advancedTools } from '../src/tools/advanced.ts'
 import { pageTools } from '../src/tools/page.ts'
+import { consoleTool } from '../src/tools/console.ts'
 import { screenshotTool } from '../src/tools/screenshot.ts'
 import { sessionTools } from '../src/tools/session.ts'
 import { BROWSER_TOOLS } from '../src/acquire.ts'
@@ -89,6 +90,7 @@ function allTools(runtime: BrowserRuntime): ToolDefinition[] {
     ...sessionTools(deps),
     ...pageTools(deps),
     ...advancedTools(deps),
+    consoleTool(deps),
     screenshotTool({ ...deps, screenshotsDir: () => '/tmp/dsh-browser-none' }),
   ]
 }
@@ -166,6 +168,7 @@ const CALL_ARGS: Record<string, unknown> = {
   browser_screenshot: { format: 'png' },
   browser_evaluate: { expression: '1' },
   browser_release: {},
+  browser_console: { action: 'read', wait_ms: 0 },
 }
 
 describe('未获授权时能否影响浏览器', () => {

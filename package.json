@@ -1,6 +1,6 @@
 {
   "name": "dsh-browser",
-  "version": "0.1.0",
+  "version": "0.1.1-local.1",
   "description": "不依赖 Chrome 调试协议驱动用户自己的 Google Chrome: 通过 native messaging 让扩展与 dsh 通信, 页面以带编号的文本交给模型, 保留真实 profile 与登录态.",
   "type": "module",
   "main": "lib/index.js",
@@ -31,7 +31,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/azazo1/dsh-browser"
+    "url": "https://github.com/Shichien/dsh-browser"
   },
   "files": [
     "lib/*.js",

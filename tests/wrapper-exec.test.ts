@@ -78,7 +78,8 @@ async function installFakeInterpreter(): Promise<string> {
   return path
 }
 
-describe('启动包装脚本的 sh 语法', () => {
+// 这是 POSIX shell 的语法契约, Windows 的 cmd 执行在下面单独验证.
+describe.skipIf(process.platform === 'win32')('启动包装脚本的 sh 语法', () => {
   it('/bin/sh 不接受 exec 后面的前缀变量赋值 (这是必须避开的写法)', async () => {
     const interpreter = await installFakeInterpreter()
     // 这个写法看起来像对的, 但 POSIX sh 会把 FOO=bar 当成命令名.
@@ -118,9 +119,20 @@ describe('真实生成的包装脚本可执行', () => {
     expect(wrapper).not.toContain('/usr/bin/env')
     expect(wrapper).toContain(status.interpreter)
 
-    // 真的执行它: node 会收到 nm-host.cjs 与会合文件两个参数, 并且因为读不到会合
-    // 文件而进入等待重试. 用短超时把它杀掉, 只验证"它成功启动到 node 里".
-    await chmod(status.wrapperPath, 0o755)
+    if (process.platform === 'win32') {
+      // 执行实际生成的 cmd, 假解释器同时验证带空格路径的引号与两个参数.
+      const interpreter = join(workspace, 'fake node.cmd')
+      await writeFile(interpreter, `@echo off\r\n(echo arg1=%~1&echo arg2=%~2&echo ELECTRON_RUN_AS_NODE=%ELECTRON_RUN_AS_NODE%) > "${outputFile}"\r\n`)
+      const probe = join(workspace, 'probe.cmd')
+      await writeFile(probe, wrapper.replace(status.interpreter, interpreter))
+      await run(process.env.ComSpec ?? 'cmd.exe', ['/d', '/c', probe], { timeout: 5_000 })
+      const observed = await readFile(outputFile, 'utf8')
+      expect(observed).toContain('arg1=' + join(paths.dataDir, 'native-host', 'nm-host.cjs'))
+      expect(observed).toContain('arg2=' + paths.rendezvousFile)
+      if (process.versions['electron'] !== undefined) expect(observed).toContain('ELECTRON_RUN_AS_NODE=1')
+      return
+    }
+
     const mode = (await stat(status.wrapperPath)).mode & 0o777
     expect(mode & 0o111, '包装脚本必须可执行').not.toBe(0)
 

@@ -77,6 +77,10 @@ export interface BrowserStatus {
   pairingConfigured: boolean
   /** 握手因配对失败被拒时的原因; null 表示没有发生过. */
   pairingError: string | null
+  /** 握手是否要求配对令牌; false 时上面两项都不参与就绪判定. */
+  requirePairing: boolean
+  /** 未持有驱动权时是否需要审批. */
+  askOnAcquire: boolean
   /** 当前持有浏览器驱动权的会话 id; null 表示没有会话占用. */
   holderId: string | null
   /** 扩展当前绑定的标签页. */
@@ -151,9 +155,13 @@ export function describeBridgeError(error: unknown): string {
       case 'no-binding':
         return '扩展没有连着 dsh. 请确认扩展已安装并在 chrome://extensions 中是启用状态, 然后点它的图标查看连接状态; 若显示未连接, 请到本插件的配置页点「安装连接组件」.'
       case 'stale-target':
-        return `${detail} 请重新调用 browser_snapshot 获取最新结构后再操作.`
+        return /标签页.*关闭/u.test(detail)
+          ? `${detail} 请用 browser_tabs 列出标签页, 再用 browser_select_tab 重新绑定目标.`
+          : `${detail} 请重新调用 browser_snapshot 获取最新结构后再操作.`
       case 'unknown-element':
-        return `${detail} 编号来自最近一次 browser_snapshot, 请重新取快照确认编号.`
+        return /选择器|文件输入框|input\[type/u.test(detail)
+          ? `${detail} 请用 browser_query 查询 input[type=file], 确认上传选择器和 nth; 文件输入框不使用快照编号.`
+          : `${detail} 编号来自最近一次 browser_snapshot, 请重新取快照确认编号.`
       case 'injection-blocked':
         // 扩展已经说明了是哪种页面以及为什么, 这里不再复述原因.
         return detail
@@ -161,7 +169,7 @@ export function describeBridgeError(error: unknown): string {
         // 原因 (为什么被拒, 该怎么改) 全在 detail 里, 原样透出即可.
         return detail === '' ? String(error) : detail
       case 'timeout':
-        return `${detail} 页面可能还在加载; 稍后重试或先用 browser_wait 等待特定文本.`
+        return `${detail} 请用 browser_snapshot 或 browser_text 检查当前页面与目标条件; 确认仍需等待后再决定是否重试, 不要无条件重复等待.`
       default:
         return detail === '' ? String(error) : detail
     }
@@ -187,6 +195,8 @@ export function describeBridgeError(error: unknown): string {
 export function makeResource(input: {
   bridge: BridgeServer
   assertGranted: () => void
+  beforeCall?: (method: BrowserMethod) => number
+  afterCall?: (method: BrowserMethod, generation: number | undefined) => void
   onClose: () => void
 }): { value: BrowserResource, close: () => Promise<void> } {
   return {
@@ -197,13 +207,42 @@ export function makeResource(input: {
       // 写法里变成意外抛错.
       call: async (method, args, callSignal, options) => {
         input.assertGranted()
-        return await input.bridge.call(method, args, {
+        const generation = input.beforeCall?.(method)
+        const result = await input.bridge.call(method, args, {
           signal: callSignal,
           ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
         })
+        input.afterCall?.(method, generation)
+        return result
       },
     },
     close: async () => { input.onClose() },
+  }
+}
+
+/** 换手后不能继承扩展的全局绑定; 旧 activate 的异步返回也不能给新持有者授权. */
+export class TabBindingGuard {
+  private generation = 0
+  private selected = false
+
+  get hasSelection(): boolean { return this.selected }
+
+  reset(): void {
+    this.generation++
+    this.selected = false
+  }
+
+  beforeCall(method: BrowserMethod): number {
+    if (!this.selected && (method.startsWith('page.') || method === 'console.start' || method === 'console.read')) {
+      throw new BrowserUnavailableError('本次取得浏览器后尚未绑定标签页: 请先用 browser_select_tab 明确指定目标, 不能继承其他会话的绑定.')
+    }
+    return this.generation
+  }
+
+  afterCall(method: BrowserMethod, generation: number | undefined): void {
+    if (method !== 'tabs.activate') return
+    if (generation === this.generation) this.selected = true
+    else this.selected = false // 旧请求可能改变了扩展全局绑定, 要求当前持有者重新确认.
   }
 }
 
@@ -222,6 +261,7 @@ export class BrowserRuntime {
    * 这里只负责记住状态, 不自己做仲裁.
    */
   private granted: Agent | null = null
+  private readonly tabBinding = new TabBindingGuard()
 
   /** 已经登记过"作用域回收时放弃授予"的会话, 避免重复登记. */
   private readonly grantWatchers = new WeakSet<Agent>()
@@ -260,7 +300,7 @@ export class BrowserRuntime {
 
   /** 扩展当前绑定的标签页 id; 未绑定时为 null. */
   get boundTabId(): number | null {
-    return this.bridge.connectionState.boundTabId
+    return this.tabBinding.hasSelection ? this.bridge.connectionState.boundTabId : null
   }
 
   /**
@@ -290,8 +330,8 @@ export class BrowserRuntime {
     const occupant = this.granted
     return new BrowserUnavailableError(
       occupant === null
-        ? '本会话还没有取得浏览器. 请直接用浏览器工具发起一次调用 —— 那次调用会先征求用户同意, 同意后即可使用.'
-        : `浏览器现在归会话 ${occupant.id} 使用. 请直接发起调用: 那次调用会征求用户同意, 同意后浏览器会交到本会话手上.`,
+        ? '本会话还没有取得浏览器. 请直接用浏览器工具发起一次调用 —— 将按 askOnAcquire 配置征求同意或在就绪后静默取得.'
+        : `浏览器现在归会话 ${occupant.id} 使用. 请直接发起调用: 将按 askOnAcquire 配置征求同意或在就绪后静默取得.`,
     )
   }
 
@@ -321,6 +361,7 @@ export class BrowserRuntime {
     if (this.granted === agent) return
     const previous = this.granted
     this.granted = agent
+    this.tabBinding.reset()
     if (previous !== null) {
       this.ctx.logger.info(`dsh-browser: 浏览器驱动权由会话 ${previous.id} 交给会话 ${agent.id}`)
     }
@@ -333,6 +374,7 @@ export class BrowserRuntime {
       agent.ctx.effect(() => () => {
         if (this.granted === agent) {
           this.granted = null
+          this.tabBinding.reset()
           this.ctx.logger.info(`dsh-browser: 会话 ${agent.id} 已结束, 浏览器驱动权回到无人持有`)
         }
       }, 'dsh-browser: browser grant')
@@ -348,6 +390,7 @@ export class BrowserRuntime {
   release(agent: Agent): boolean {
     if (this.granted !== agent) return false
     this.granted = null
+    this.tabBinding.reset()
     this.ctx.logger.info(`dsh-browser: 会话 ${agent.id} 主动释放浏览器驱动权`)
     return true
   }
@@ -366,6 +409,7 @@ export class BrowserRuntime {
       ...hostParts(status.host, this.paths),
       pairingConfigured: status.pairingConfigured,
       pairingError: status.pairingError,
+      requirePairing: status.requirePairing,
       bridgeConnected: status.bridgeConnected,
       launchStandaloneChromeProfile: this.config.launchStandaloneChromeProfile.get(),
     })
@@ -441,7 +485,9 @@ export class BrowserRuntime {
       launchStandaloneChromeProfile: this.config.launchStandaloneChromeProfile.get(),
       pairingConfigured: this.storedPairingToken() !== '',
       pairingError: bridgeState.pairingError,
-      boundTabId: bridgeState.boundTabId,
+      requirePairing: this.config.requirePairing.get(),
+      askOnAcquire: this.config.askOnAcquire.get(),
+      boundTabId: this.boundTabId,
       bridgeError: bridgeState.lastError,
       launchArgs: this.launchArgs,
       peerUserDataDir: bridgeState.peerUserDataDir,
@@ -520,6 +566,8 @@ export class BrowserRuntime {
       // 每次调用都重新问一次"现在是否仍被授予", 而不是在构造时定下来: 资源可能在授权被
       // 转走之后还活着, 那时它必须立刻失效, 而不是继续替旧会话驱动浏览器.
       assertGranted: () => { if (this.granted !== agent) throw this.notGrantedError() },
+      beforeCall: method => this.tabBinding.beforeCall(method),
+      afterCall: (method, generation) => this.tabBinding.afterCall(method, generation),
       onClose: () => {
         this.ctx.logger.info(`dsh-browser: 会话 ${agentLabel} 释放浏览器驱动权 (Chrome 保持运行)`)
       },

@@ -23,7 +23,7 @@ export function sessionTools(deps: ToolDeps): ToolDefinition[] {
     description:
       '确保浏览器平面可用. 默认不自行打开 Chrome, 只用扩展已经连上的那个浏览器; '
       + '打开 launchStandaloneChromeProfile 后始终启动独立 profile, 即使日常 Chrome 里扩展已经连着也不复用. '
-      + '浏览器同一时刻只服务一个会话, 所以每个会话第一次用它时都会弹一次审批, 由用户决定现在归谁; '
+      + '浏览器同一时刻只服务一个会话; askOnAcquire 开启时未持有的会话须先获批准, 关闭时在就绪后静默取得; '
       + 'justification 参数会展示给用户, 调用前请想好一句能让人看懂的话, 不要写"用户要求打开浏览器"这类空话. '
       + '交出驱动权用 browser_release.',
     parameters: {
@@ -100,7 +100,7 @@ export function sessionTools(deps: ToolDeps): ToolDefinition[] {
       // 绑定了标签页也不代表能操作: 还要扩展连着.
       const ready = current.chrome !== null
         && current.host?.manifestReady === true
-        && current.pairingError === null
+        && (!current.requirePairing || (current.pairingConfigured && current.pairingError === null))
         && extensionLinkCounts(current)
       // 带上本会话身份, 让摘要能回答"我现在能不能直接用"这个最要紧的问题.
       return { ready, text: formatStatus(current, requireAgent(exec).id) }
@@ -214,7 +214,7 @@ export function sessionTools(deps: ToolDeps): ToolDefinition[] {
     name: 'browser_release',
     description:
       '把浏览器驱动权交出去. 浏览器同一时刻只服务一个会话, 所以当别的会话要用时, 你可以用本工具'
-      + '主动让出, 而不必等自己的会话结束. 让出之后本会话若还要用, 下一次浏览器调用会重新弹审批. '
+      + '主动让出, 而不必等自己的会话结束. 让出之后本会话若还要用, 下一次浏览器调用会按 askOnAcquire 配置重新审批或静默取得. '
       + '用完浏览器时主动让出是好习惯: 另一个会话的申请就不必等本会话被切走或结束. '
       + '本工具不需要审批, 因为它只是放弃, 不取得任何东西.',
     parameters: {},
@@ -236,7 +236,7 @@ export function sessionTools(deps: ToolDeps): ToolDefinition[] {
       return {
         released,
         text: released
-          ? '已交出浏览器驱动权; 别的会话现在可以申请使用. 本会话若还要用, 下一次浏览器调用会重新弹审批.'
+          ? '已交出浏览器驱动权; 别的会话现在可以申请使用. 本会话若还要用, 下一次浏览器调用会按 askOnAcquire 配置重新审批或静默取得.'
           // 不是持有者时说清楚, 免得模型以为"释放过了"而重复调用.
           : (deps.runtime.grantedId === null
               ? '本会话没有持有浏览器驱动权, 而且现在也没有别的会话持有; 无需释放.'
