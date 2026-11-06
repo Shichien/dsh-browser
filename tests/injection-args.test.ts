@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 /** 上一次 executeScript 收到的注入参数. */
 let lastArgs: unknown[] | undefined
+let lastInjectImmediately: boolean | undefined
 
 /** 装一个假的 chrome API, 只实现本测试用到的部分. */
 function installChromeStub(): void {
@@ -36,8 +37,9 @@ function installChromeStub(): void {
     },
     scripting: {
       /** 记录参数并回一个合成结果, 让调用链继续走下去. */
-      executeScript: async (injection: { args?: unknown[] }) => {
+      executeScript: async (injection: { args?: unknown[], injectImmediately?: boolean }) => {
         lastArgs = injection.args
+        lastInjectImmediately = injection.injectImmediately
         // 返回一个足以让 unwrap 通过的结构; 具体内容不影响本测试.
         return [{ result: { ok: true, note: 'stub' } }]
       },
@@ -55,6 +57,22 @@ beforeEach(() => {
 })
 
 describe('注入参数的序列化边界', () => {
+  it('快照、查询和上传各阶段都要求立即注入', async () => {
+    const page = await import('../extension/src/background/page.ts')
+    const cases: [string, () => Promise<unknown>][] = [
+      ['snapshot', () => page.snapshotPage(1)],
+      ['query', () => page.queryInTab(1, 'body', 50, 200)],
+      ['upload-begin', () => page.uploadBeginInTab(1, 'test.txt', 'text/plain', 1)],
+      ['upload-chunk', () => page.uploadChunkInTab(1, 'upload-id', 'YQ==')],
+      ['upload-commit', () => page.uploadCommitInTab(1, 'input[type=file]', 0, ['upload-id'])],
+      ['upload-abort', () => page.uploadAbortInTab(1, ['upload-id'])],
+    ]
+    for (const [label, run] of cases) {
+      lastInjectImmediately = undefined
+      await run()
+      expect(lastInjectImmediately, `${label} 不应等待 document_idle`).toBe(true)
+    }
+  })
   it('省略 amount 的滚动不会把 undefined 送进页面', async () => {
     const page = await import('../extension/src/background/page.ts')
     // 这正是真机上失败的那一次调用: 只给方向, 不给像素数.

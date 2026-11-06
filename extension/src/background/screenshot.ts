@@ -38,6 +38,8 @@ async function readViewport(tabId: number): Promise<Viewport> {
   const injected = chrome.scripting.executeScript({
     target: { tabId },
     world: 'ISOLATED',
+    // Viewport reads must not wait for document_idle either.
+    injectImmediately: true,
     func: (() => {
       return {
         width: Math.round(globalThis.innerWidth * (globalThis.devicePixelRatio || 1)),

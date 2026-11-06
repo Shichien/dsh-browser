@@ -119,6 +119,8 @@ async function runInTab<R>(tabId: number, func: (...args: never[]) => R, args: u
     const injected = chrome.scripting.executeScript({
       target: { tabId },
       world: 'ISOLATED',
+      // Avoid waiting for document_idle on pages with long-running loads.
+      injectImmediately: true,
       func: func as (...args: never[]) => unknown,
       args: serializableArgs(args) as never[],
     }) as Promise<chrome.scripting.InjectionResult<unknown>[]>

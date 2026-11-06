@@ -25,6 +25,17 @@ describe('screenshot target readiness', () => {
     expect(await capture).toMatchObject({ data: 'YQ==', width: 800 })
     expect(api.windows.update).toHaveBeenCalledWith(3, { state: 'normal', focused: true })
   })
+  it('reads the viewport without waiting for document_idle', async () => {
+    const api = setup('normal')
+    const capture = captureTab(7, 'png')
+    await vi.runAllTimersAsync()
+    await capture
+    expect(api.scripting.executeScript).toHaveBeenCalledWith(expect.objectContaining({
+      target: { tabId: 7 },
+      world: 'ISOLATED',
+      injectImmediately: true,
+    }))
+  })
   it('preserves maximized windows', async () => {
     const api = setup('maximized')
     const capture = captureTab(7, 'png')

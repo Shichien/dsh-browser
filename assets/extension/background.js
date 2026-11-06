@@ -846,6 +846,8 @@ async function runInTab(tabId, func, args) {
     const injected = chrome.scripting.executeScript({
       target: { tabId },
       world: "ISOLATED",
+      // Avoid waiting for document_idle on pages with long-running loads.
+      injectImmediately: true,
       func,
       args: serializableArgs(args)
     });
@@ -995,6 +997,8 @@ async function readViewport(tabId) {
   const injected = chrome.scripting.executeScript({
     target: { tabId },
     world: "ISOLATED",
+    // Viewport reads must not wait for document_idle either.
+    injectImmediately: true,
     func: (() => {
       return {
         width: Math.round(globalThis.innerWidth * (globalThis.devicePixelRatio || 1)),
